@@ -357,6 +357,23 @@
         .countdown-container.revealed {
             opacity: 1; transform: translateY(0); pointer-events: auto;
         }
+
+        .scroll-lock-hint {
+            font-family: 'Cormorant Garamond', serif;
+            font-size: 0.85rem;
+            font-style: italic;
+            color: var(--text-light);
+            margin-top: 1.5rem;
+            opacity: 1;
+            transition: opacity 0.6s ease;
+        }
+        .scroll-lock-hint.hidden { opacity: 0; pointer-events: none; }
+        body.hearts-scroll-locked {
+            overscroll-behavior-y: none;
+        }
+        body.hearts-scroll-locked #post-scratch-content {
+            display: none;
+        }
         .cd-item {
             display: flex;
             flex-direction: column; align-items: center; justify-content: center;
@@ -665,6 +682,7 @@
             <span class="section-label">Save The Date</span>
             <h2 class="section-heading" style="color:var(--terracotta)">Reveal Our<br>Big Day</h2>
             <p class="reveal reveal-delay-2 mt-4" style="font-style:italic;color:var(--text-light);font-size:1.1rem;margin-bottom:1rem;">Scratch the hearts to reveal</p>
+            <p class="scroll-lock-hint reveal reveal-delay-3" id="scrollLockHint">Scratch all hearts to continue scrolling</p>
         </div>
 
         <div class="hearts-row reveal reveal-delay-2" id="heartsRow">
@@ -707,6 +725,7 @@
         </div>
     </section>
 
+    <div id="post-scratch-content">
     <section id="memories-section">
         <div class="text-center reveal">
             <span class="section-label">A Glimpse of Us</span>
@@ -885,7 +904,7 @@
 
     <section id="footer-section">
         <div class="reveal" style="width: 100%;">
-            <div style="display: flex; justify-content: center; margin-bottom: 1.5rem;">
+            <div style="display: flex; justify-content: center; margin-bottom: 1.5rem; margin-left: 2.8rem;">
                 <img src="https://pub-1953a6673e864f3488c645252f75de98.r2.dev/June/Parul%20%26%20Nikhil%20-%20Shreya/Countdown%20bg%20-New%20Vintage%20Royal%20Look%20%20(1).png" alt="Parul & Nikhil Logo" style="max-width: 260px; width: 75%; height: auto; filter: drop-shadow(0 10px 25px rgba(232, 192, 122, 0.25)); animation: floatIcon 6s ease-in-out infinite;">
             </div>
             <span style="font-family:'Great Vibes',cursive;font-size:clamp(5rem, 18vw, 8rem);color:var(--gold-light);display:block;line-height:1.1;">
@@ -903,6 +922,7 @@
             MADE WITH <span style="color: #e74c3c;">♥</span> BY <a href="https://www.instagram.com/house_of_invitation_?igsh=azBiaXM4eWptZXp0" target="_blank" rel="noopener noreferrer" style="color: var(--gold-light); text-decoration: none; text-transform: uppercase;">HOUSE OF INVITATION</a>
         </div>
     </section>
+    </div>
 
 </div>
 
@@ -1095,6 +1115,9 @@ function initScratchHearts() {
         if (revealedHeartsCount === totalHearts) {
             const heartsRow = document.getElementById('heartsRow');
             if (heartsRow) heartsRow.classList.add('unlocked');
+
+            const scrollHint = document.getElementById('scrollLockHint');
+            if (scrollHint) scrollHint.classList.add('hidden');
             
             const surpriseMsg = document.getElementById('surpriseMessage');
             if (surpriseMsg) {
@@ -1123,6 +1146,8 @@ function initScratchHearts() {
                     zIndex: 9999
                 });
             }, 800);
+
+            unlockScrollAndAdvance();
         }
     }
 
@@ -1146,6 +1171,9 @@ let mainRevealed = false;
 let autoScrollTimeout;
 let userInteracted = false;
 let scratchInitialized = false;
+let heartsFullyRevealed = false;
+let postScratchUserInteracted = false;
+let postScratchAdvanceTimeout = null;
 
 /* DAY NIGHT LOGIC */
 let autoThemeDone = false;
@@ -1178,22 +1206,90 @@ if (themeToggle) {
 }
 /* END DAY NIGHT LOGIC */
 
-function smoothScrollTo(endY, duration) {
+function easeInOutCubic(t) {
+    return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
+function smoothScrollTo(endY, duration, shouldCancel = null, onComplete = null) {
     const startY = window.scrollY;
     const distanceY = endY - startY;
-    let startTime = null; let animationFrameId;
+    if (Math.abs(distanceY) < 2) {
+        if (onComplete) onComplete();
+        return;
+    }
+
+    let startTime = null;
+    let animationFrameId;
 
     function animation(currentTime) {
-        if (userInteracted) { cancelAnimationFrame(animationFrameId); return; }
+        if (shouldCancel && shouldCancel()) {
+            cancelAnimationFrame(animationFrameId);
+            if (onComplete) onComplete();
+            return;
+        }
         if (startTime === null) startTime = currentTime;
-        const timeElapsed = currentTime - startTime;
-        let t = timeElapsed / (duration / 2); let run;
-        if (t < 1) run = distanceY / 2 * t * t * t + startY;
-        else { t -= 2; run = distanceY / 2 * (t * t * t + 2) + startY; }
-        window.scrollTo(0, run);
-        if (timeElapsed < duration) animationFrameId = requestAnimationFrame(animation);
+        const progress = Math.min(1, (currentTime - startTime) / duration);
+        window.scrollTo(0, startY + distanceY * easeInOutCubic(progress));
+        if (progress < 1) {
+            animationFrameId = requestAnimationFrame(animation);
+        } else if (onComplete) {
+            onComplete();
+        }
     }
+
     animationFrameId = requestAnimationFrame(animation);
+}
+
+function handlePostScratchUserInteraction() {
+    postScratchUserInteracted = true;
+    clearTimeout(postScratchAdvanceTimeout);
+    removePostScratchInteractionListeners();
+}
+
+function addPostScratchInteractionListeners() {
+    window.addEventListener('wheel', handlePostScratchUserInteraction, { passive: true });
+    window.addEventListener('touchstart', handlePostScratchUserInteraction, { passive: true });
+    window.addEventListener('mousedown', handlePostScratchUserInteraction, { passive: true });
+    window.addEventListener('keydown', handlePostScratchUserInteraction, { passive: true });
+}
+
+function removePostScratchInteractionListeners() {
+    window.removeEventListener('wheel', handlePostScratchUserInteraction);
+    window.removeEventListener('touchstart', handlePostScratchUserInteraction);
+    window.removeEventListener('mousedown', handlePostScratchUserInteraction);
+    window.removeEventListener('keydown', handlePostScratchUserInteraction);
+}
+
+function initScrollLock() {
+    heartsFullyRevealed = false;
+    document.body.classList.add('hearts-scroll-locked');
+}
+
+function unlockScrollAndAdvance() {
+    if (heartsFullyRevealed) return;
+    heartsFullyRevealed = true;
+    document.body.classList.remove('hearts-scroll-locked');
+
+    postScratchUserInteracted = false;
+    addPostScratchInteractionListeners();
+
+    postScratchAdvanceTimeout = setTimeout(() => {
+        if (postScratchUserInteracted) return;
+
+        const memoriesSection = document.getElementById('memories-section');
+        if (!memoriesSection) {
+            removePostScratchInteractionListeners();
+            return;
+        }
+
+        const targetY = memoriesSection.getBoundingClientRect().top + window.scrollY;
+        smoothScrollTo(
+            targetY,
+            2600,
+            () => postScratchUserInteracted,
+            removePostScratchInteractionListeners
+        );
+    }, 2200);
 }
 
 function handleUserInteraction() {
@@ -1224,6 +1320,7 @@ function revealMain() {
     scheduleThemeDemo();
     
     if(!scratchInitialized) { initScratchHearts(); scratchInitialized = true; }
+    initScrollLock();
     
     setTimeout(() => {
         window.addEventListener('wheel', handleUserInteraction, { passive: true });
@@ -1237,7 +1334,7 @@ function revealMain() {
             const scratchSection = document.getElementById('scratch-reveal-section');
             if (scratchSection) {
                 const targetY = scratchSection.getBoundingClientRect().top + window.scrollY + (scratchSection.offsetHeight / 2) - (window.innerHeight / 2);
-                smoothScrollTo(targetY, 2500);
+                smoothScrollTo(targetY, 2500, () => userInteracted);
             }
         }
     }, 6000);
